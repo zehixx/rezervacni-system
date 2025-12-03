@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meeting Room Booking System</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #581c87 50%, #0f172a 100%);
+            color: white;
+            min-height: 100vh;
+            padding: 1.5rem;
+            position: relative;
+            overflow-x: hidden;
+        }
+        /* Animated Background */
+        .background-animation {
+            position: fixed;
+            inset: 0;
+            overflow: hidden;
+            pointer-events: none;
+            z-index: 0;
+        }
+        .bg-circle {
+            position: absolute;
+            width: 24rem;
+            height: 24rem;
+            border-radius: 50%;
+            filter: blur(80px);
+        }
+        .bg-circle-1 { background: rgba(168, 85, 247, 0.2); top: -12rem; left: -12rem; animation: pulse 4s ease-in-out infinite; }
+        .bg-circle-2 { background: rgba(59, 130, 246, 0.2); bottom: -12rem; right: -12rem; animation: pulse 4s ease-in-out infinite 1s; }
+        @keyframes pulse { 0%,100% { opacity:0.5; transform:scale(1); } 50% { opacity:0.8; transform:scale(1.1); } }
+        /* Container */
+        .container { max-width: 75rem; margin: 0 auto; position: relative; z-index: 10; }
+        /* Header */
+        .header { text-align: center; margin-bottom: 3rem; }
+        .header-content { display: flex; align-items: center; justify-content: center; margin-bottom: 1rem; }
+        .wifi-icon { width: 2rem; height: 2rem; color: #22d3ee; margin-right: 0.75rem; animation: pulse 2s ease-in-out infinite; }
+        .main-title { font-size: 3rem; font-weight: bold; background: linear-gradient(to right, #22d3ee, #a78bfa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+        .subtitle { color: #9ca3af; font-size: 1.125rem; }
+        /* Status Card */
+        .status-card {
+            margin-bottom: 2rem;
+            padding: 1.5rem;
+            background: linear-gradient(to right, rgba(30,41,59,0.5), rgba(88,28,135,0.5));
+            backdrop-filter: blur(20px);
+            border-radius: 1rem;
+            border: 1px solid rgba(168,85,247,0.3);
+            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);
+        }
+        .status-title { font-size:1.5rem; font-weight:bold; margin-bottom:1rem; display:flex; align-items:center; }
+        .status-indicator { width:1rem; height:1rem; border-radius:50%; margin-right:0.75rem; }
+        .status-indicator.free { background:#10b981; }
+        .status-indicator.occupied { background:#ef4444; animation:pulse 2s ease-in-out infinite; }
+        .status-content { color:#d1d5db; }
+        .status-free { font-size:1.25rem; color:#34d399; font-weight:600; margin-bottom:0.5rem; }
+        .status-occupied { font-size:1.25rem; color:#f87171; font-weight:600; margin-bottom:0.5rem; }
+        .status-description { color:#d1d5db; }
+        .status-detail { color:#d1d5db; margin-bottom:0.25rem; }
+        .status-value { color:#22d3ee; }
+        /* Grid */
+        .grid { display:grid; grid-template-columns:1fr; gap:2rem; margin-bottom:2rem; }
+        @media(min-width:768px){ .grid{ grid-template-columns:repeat(2,1fr); } }
+        /* Card */
+        .card {
+            padding:2rem;
+            background: rgba(30,41,59,0.3);
+            backdrop-filter: blur(20px);
+            border-radius:1rem;
+            border:1px solid rgba(34,211,238,0.3);
+            box-shadow:0 25px 50px -12px rgba(0,0,0,0.5);
+        }
+        .card-title { font-size:1.875rem; font-weight:bold; margin-bottom:1.5rem; display:flex; align-items:center; }
+        .icon { width:1.5rem; height:1.5rem; margin-right:0.75rem; color:#22d3ee; }
+        /* Form */
+        .form-group { margin-bottom:1.5rem; }
+        .form-label { display:block; font-size:0.875rem; font-weight:500; color:#d1d5db; margin-bottom:0.5rem; }
+        .form-input {
+            width:100%;
+            padding:0.75rem 1rem;
+            background: rgba(51,65,85,0.5);
+            border:1px solid rgba(168,85,247,0.5);
+            border-radius:0.75rem;
+            color:white;
+            font-size:1rem;
+            outline:none;
+            transition: all 0.3s;
+        }
+        .form-input::placeholder { color:#9ca3af; }
+        .form-input:focus { border-color:#22d3ee; box-shadow:0 0 0 3px rgba(34,211,238,0.1); }
+        .form-row { display:grid; grid-template-columns:repeat(2,1fr); gap:1rem; }
+        /* Button */
+        .btn-primary {
+            width:100%;
+            padding:1rem;
+            background: linear-gradient(to right, #06b6d4, #a855f7);
+            border:none;
+            border-radius:0.75rem;
+            color:white;
+            font-size:1.125rem;
+            font-weight:600;
+            cursor:pointer;
+            transition: all 0.3s;
+            box-shadow:0 10px 25px -5px rgba(168,85,247,0.5);
+        }
+        .btn-primary:hover { background: linear-gradient(to right,#0891b2,#9333ea); transform:scale(1.05); }
+        .btn-primary:active { transform:scale(0.98); }
+        /* Success Message */
+        .success-message { margin-top:1rem; padding:1rem; background: rgba(16,185,129,0.2); border:1px solid #10b981; border-radius:0.75rem; display:flex; align-items:center; animation:slideIn 0.3s ease-out; }
+        .success-message.hidden { display:none; }
+        .icon-success { width:1.5rem; height:1.5rem; color:#34d399; margin-right:0.75rem; }
+        @keyframes slideIn { from { opacity:0; transform:translateY(-10px); } to { opacity:1; transform:translateY(0); } }
+        /* Bookings List */
+        .bookings-list { display:flex; flex-direction:column; gap:1rem; }
+        .booking-item {
+            padding:1rem;
+            background: linear-gradient(to right, rgba(88,28,135,0.4), rgba(30,41,59,0.4));
+            border-radius:0.75rem;
+            border:1px solid rgba(168,85,247,0.3);
+            transition: all 0.3s;
+        }
+        .booking-item:hover { border-color: rgba(34,211,238,0.5); }
+        .booking-title { font-weight:600; font-size:1.125rem; color:#22d3ee; margin-bottom:0.5rem; }
+        .booking-time { display:flex; align-items:center; font-size:0.875rem; color:#d1d5db; margin-bottom:0.25rem; }
+        .booking-time svg { width:1rem; height:1rem; color:#a78bfa; margin-right:0.5rem; }
+        .booking-duration { font-size:0.75rem; color:#9ca3af; }
+        /* Empty State */
+        .empty-state { text-align:center; padding:3rem; color:#9ca3af; }
+        .empty-icon { width:4rem; height:4rem; margin:0 auto 1rem; opacity:0.5; }
+        /* Info Card */
+        .info-card {
+            margin-top:2rem;
+            padding:1.5rem;
+            background: rgba(30,41,59,0.2);
+            backdrop-filter: blur(20px);
+            border-radius:1rem;
+            border:1px solid rgba(34,211,238,0.2);
+        }
+        .info-title { font-size:1.25rem; font-weight:bold; margin-bottom:0.75rem; color:#22d3ee; }
+        .info-description { color:#d1d5db; font-size:0.875rem; margin-bottom:0.5rem; }
+        .code-block { background: rgba(15,23,42,0.5); padding:1rem; border-radius:0.5rem; font-size:0.75rem; color:#34d399; overflow-x:auto; margin:0.5rem 0; }
+        .info-hint { color:#9ca3af; font-size:0.75rem; margin-top:0.5rem; }
+        /* Responsive */
+        @media(max-width:640px){
+            .main-title { font-size:2rem; }
+            .card { padding:1.5rem; }
+            .form-row { grid-template-columns:1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="background-animation">
+        <div class="bg-circle bg-circle-1"></div>
+        <div class="bg-circle bg-circle-2"></div>
+    </div>
+
+    <div class="container">
+        <header class="header">
+            <div class="header-content">
+                <svg class="wifi-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M5 12.55a11 11 0 0 1 14.08 0"></path>
+                    <path d="M1.42 9a16 16 0 0 1 21.16 0"></path>
+                    <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
+                    <line x1="12" y1="20" x2="12.01" y2="20"></line>
+                </svg>
+                <h1 class="main-title">Meeting Room System</h1>
+            </div>
+            
+        </header>
+
+        <div class="status-card">
+            <h2 class="status-title">
+                <span class="status-indicator" id="statusIndicator"></span>
+                Aktuální stav místnosti
+            </h2>
+            <div id="currentStatus" class="status-content">
+                <p class="status-free">✅ VOLNO</p>
+                <p class="status-description">Místnost je aktuálně k dispozici</p>
+            </div>
+        </div>
+
+        <div class="grid">
+            <div class="card">
+                <h2 class="card-title">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                        <line x1="16" y1="2" x2="16" y2="6"></line>
+                        <line x1="8" y1="2" x2="8" y2="6"></line>
+                        <line x1="3" y1="10" x2="21" y2="10"></line>
+                    </svg>
+                    Nová rezervace
+                </h2>
+                <div class="form-group">
+                    <label class="form-label">Název/účel schůzky</label>
+                    <input type="text" id="roomName" class="form-input" placeholder="např. Team Meeting">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Datum</label>
+                    <input type="date" id="selectedDate" class="form-input">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Čas od</label>
+                        <input type="time" id="startTime" class="form-input">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Čas do</label>
+                        <input type="time" id="endTime" class="form-input">
+                    </div>
+                </div>
+                <button id="bookButton" class="btn-primary">Rezervovat místnost</button>
+                <div id="successMessage" class="success-message hidden">
+                    <svg class="icon-success" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                        <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                    </svg>
+                    <span>Rezervace úspěšně vytvořena!</span>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2 class="card-title">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <polyline points="12 6 12 12 16 14"></polyline>
+                    </svg>
+                    Dnešní rezervace
+                </h2>
+                <div id="todayBookings" class="bookings-list">
+                    <div class="empty-state">
+                        <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                            <line x1="16" y1="2" x2="16" y2="6"></line>
+                            <line x1="8" y1="2" x2="8" y2="6"></line>
+                            <line x1="3" y1="10" x2="21" y2="10"></line>
+                        </svg>
+                        <p>Žádné rezervace na dnes</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        </div>
+    </div>
+
+    <script>
+        let bookings = [];
+        let currentStatus = null;
+        const roomNameInput = document.getElementById('roomName');
+        const selectedDateInput = document.getElementById('selectedDate');
+        const startTimeInput = document.getElementById('startTime');
+        const endTimeInput = document.getElementById('endTime');
+        const bookButton = document.getElementById('bookButton');
+        const successMessage = document.getElementById('successMessage');
+        const todayBookingsContainer = document.getElementById('todayBookings');
+        const currentStatusContainer = document.getElementById('currentStatus');
+        const statusIndicator = document.getElementById('statusIndicator');
+
+        // IP Adresa serveru (pro fetch requesty)
+        const SERVER_URL = 'http://192.168.90.55:3000'; // <-- Změnit pokud je potřeba
+
+        bookButton.addEventListener('click', handleBooking);
+        
+        // Spuštění při načtení stránky
+        window.addEventListener('load', async () => {
+            const savedBookings = localStorage.getItem('meetingBookings');
+            if (savedBookings) { 
+                bookings = JSON.parse(savedBookings); 
+                // DŮLEŽITÉ: Poslat uložená data na server, aby o nich Arduino vědělo
+                await syncWithServer(); 
+            }
+            init();
+        });
+
+        function init() {
+            const today = new Date().toISOString().split('T')[0];
+            selectedDateInput.value = today;
+            
+            // Okamžitá kontrola
+            checkCurrentStatus();
+            updateDisplay();
+
+            // Interval pro web (stačí 10s)
+            setInterval(() => {
+                checkCurrentStatus();
+                updateDisplay();
+            }, 10000);
+        }
+
+        async function syncWithServer() {
+            try {
+                await fetch(`${SERVER_URL}/sync-bookings`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(bookings)
+                });
+                console.log('Rezervace synchronizovány se serverem.');
+            } catch (e) {
+                console.error('Chyba synchronizace:', e);
+            }
+        }
+
+        async function handleBooking() {
+            const roomName = roomNameInput.value.trim();
+            const selectedDate = selectedDateInput.value;
+            const startTime = startTimeInput.value;
+            const endTime = endTimeInput.value;
+
+            if (!roomName || !selectedDate || !startTime || !endTime) { alert('Vyplňte prosím všechna pole'); return; }
+            if (startTime >= endTime) { alert('Čas konce musí být po času začátku'); return; }
+
+            const newBooking = { 
+                id: Date.now(), 
+                date: selectedDate, 
+                startTime, 
+                endTime, 
+                roomName, 
+                timestamp: new Date().toISOString() 
+            };
+
+            bookings.push(newBooking);
+            saveBookings(); // Uložit do localStorage
+
+            // Poslat na server
+            try {
+                await fetch(`${SERVER_URL}/booking`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(newBooking)
+                });
+                showSuccessMessage();
+                roomNameInput.value=''; startTimeInput.value=''; endTimeInput.value='';
+                updateDisplay(); 
+                checkCurrentStatus();
+            } catch (e) {
+                alert('Chyba spojení se serverem!');
+                console.error(e);
+            }
+        }
+
+        function checkCurrentStatus() {
+            const now = new Date();
+            // Najdeme aktuální rezervaci čistě v prohlížeči pro zobrazení na webu
+            const current = bookings.find(b => {
+                const bookingDate = new Date(b.date);
+                const [startH, startM] = b.startTime.split(':').map(Number);
+                const [endH, endM] = b.endTime.split(':').map(Number);
+                
+                const startDateTime = new Date(bookingDate); 
+                startDateTime.setHours(startH, startM, 0);
+                
+                const endDateTime = new Date(bookingDate); 
+                endDateTime.setHours(endH, endM, 0);
+                
+                // Kontrola data
+                const isToday = now.toDateString() === startDateTime.toDateString();
+                // Kontrola času
+                return isToday && now >= startDateTime && now < endDateTime;
+            });
+
+            currentStatus = current || null;
+            updateStatusDisplay();
+        }
+
+        function updateStatusDisplay() {
+            if(currentStatus){
+                statusIndicator.className='status-indicator occupied';
+                const now=new Date();
+                const [endH,endM]=currentStatus.endTime.split(':').map(Number);
+                const currentH=now.getHours(); const currentM=now.getMinutes();
+                const remainingMinutes=(endH*60+endM)-(currentH*60+currentM);
+                
+                currentStatusContainer.innerHTML=`
+                    <p class="status-occupied">🔴 OBSAZENO</p>
+                    <p class="status-detail">Účel: <span class="status-value">${currentStatus.roomName}</span></p>
+                    <p class="status-detail">Čas: <span class="status-value">${currentStatus.startTime} - ${currentStatus.endTime}</span></p>
+                    <p class="status-detail">Zbývá: <span class="status-value">${remainingMinutes} min</span></p>
+                `;
+            } else {
+                statusIndicator.className='status-indicator free';
+                currentStatusContainer.innerHTML=`<p class="status-free">✅ VOLNO</p><p class="status-description">Místnost je aktuálně k dispozici</p>`;
+            }
+        }
+
+        function updateDisplay() {
+            const todayBookings=getTodayBookings();
+            if(todayBookings.length===0){
+                todayBookingsContainer.innerHTML=`<div class="empty-state"><p>Žádné rezervace na dnes</p></div>`; 
+                return;
+            }
+            todayBookings.sort((a,b)=>a.startTime.localeCompare(b.startTime));
+            todayBookingsContainer.innerHTML=todayBookings.map(b=>`
+                <div class="booking-item">
+                    <h3 class="booking-title">${b.roomName}</h3>
+                    <p class="booking-time">${b.startTime} - ${b.endTime}</p>
+                    <p class="booking-duration">Délka: ${calculateDuration(b.startTime,b.endTime)}</p>
+                </div>`).join('');
+        }
+
+        function getTodayBookings() { return bookings.filter(b=>b.date===new Date().toISOString().split('T')[0]); }
+        function calculateDuration(startTime,endTime){
+            const [startH,startM]=startTime.split(':').map(Number);
+            const [endH,endM]=endTime.split(':').map(Number);
+            const minutes=(endH*60+endM)-(startH*60+startM);
+            const h=Math.floor(minutes/60); const m=minutes%60;
+            return h>0 ? `${h}h ${m}m` : `${m}m`;
+        }
+        function showSuccessMessage(){
+            successMessage.classList.remove('hidden');
+            setTimeout(()=>successMessage.classList.add('hidden'),3000);
+        }
+        function saveBookings(){ localStorage.setItem('meetingBookings',JSON.stringify(bookings)); }
+    </script>
+</body>
+</html>
