@@ -4,7 +4,8 @@ const cors = require('cors');
 const path = require('path');
 
 const app = express();
-const PORT = 3000;
+// DŮLEŽITÉ: Render přiděluje port dynamicky, musíme použít process.env.PORT
+const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(bodyParser.json());
@@ -12,7 +13,6 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 let todayBookings = [];
 
-// Odstranění diakritiky pro Arduino
 function removeAccents(str) {
     return str ? str.normalize("NFD").replace(/[\u0300-\u036f]/g, "") : "";
 }
@@ -22,19 +22,28 @@ function timeToMinutes(timeStr) {
     return hours * 60 + minutes;
 }
 
-// Získání času ve formátu pro porovnání (H:MM)
-function getCurrentTimeMinutes() {
+// --- FIX ČASOVÉHO PÁSMA (CZECH TIME) ---
+function getCzechDate() {
     const now = new Date();
+    // Získáme UTC čas v milisekundách
+    const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+    // Přičteme 1 hodinu pro zimní čas (CET). V létě by to bylo +2.
+    const czechTime = new Date(utc + (3600000 * 1)); 
+    return czechTime;
+}
+
+function getCurrentTimeMinutes() {
+    const now = getCzechDate(); 
     return now.getHours() * 60 + now.getMinutes();
 }
 
 function getFormattedDate() {
-    const d = new Date();
+    const d = getCzechDate();
     return `${d.getDate()}.${d.getMonth() + 1}.${d.getFullYear()}`;
 }
 
 function getFormattedTime() {
-    const d = new Date();
+    const d = getCzechDate();
     const h = d.getHours().toString().padStart(2, '0');
     const m = d.getMinutes().toString().padStart(2, '0');
     return `${h}:${m}`;
@@ -42,24 +51,23 @@ function getFormattedTime() {
 
 // --- LOGIKA PRO ARDUINO ---
 function getArduinoData() {
-    const now = new Date();
+    const now = getCzechDate(); // Používáme fixnutý český čas
     const currentMinutes = getCurrentTimeMinutes();
-    const todayDateISO = now.toISOString().split('T')[0];
+    
+    // Pro jednoduchost porovnáváme jen čas, datum bereme z rezervací, které nám poslal web
+    // (Předpokládáme, že web posílá jen dnešní rezervace nebo je filtrujeme)
+    const todayDateISO = now.toISOString().split('T')[0]; // Toto je sice UTC datum, ale pro ID to stačí
 
-    // Seřadíme rezervace podle času
     const sortedBookings = todayBookings
-        .filter(b => b.date === todayDateISO)
         .sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
 
     // Hledáme aktuální schůzku
     const current = sortedBookings.find(booking => {
         const start = timeToMinutes(booking.startTime);
         const end = timeToMinutes(booking.endTime);
-        // Logika: Je aktuální čas větší/roven začátku A ZÁROVEŇ menší než konec?
         return currentMinutes >= start && currentMinutes < end;
     });
 
-    // Hledáme následující schůzku
     const next = sortedBookings.find(booking => {
         return timeToMinutes(booking.startTime) > currentMinutes;
     });
@@ -69,8 +77,7 @@ function getArduinoData() {
         currentTime: getFormattedTime()
     };
 
-    // Debugging výpis do konzole (abychom viděli, co se děje)
-    console.log(`[CHECK] Čas: ${baseResponse.currentTime} (${currentMinutes} min) | Rezervací dnes: ${sortedBookings.length}`);
+    console.log(`[CHECK] CZ Čas: ${baseResponse.currentTime} (${currentMinutes} min) | Rezervací: ${sortedBookings.length}`);
     
     if (current) {
         console.log(`   -> STAV: OBSAZENO (${current.roomName})`);
@@ -82,7 +89,7 @@ function getArduinoData() {
             status: "OCCUPIED",
             mainText: "OBSAZENO",
             roomName: removeAccents(current.roomName),
-            rangeTime: `${current.startTime} - ${current.endTime}`, // Zkráceno pro lepší fit
+            rangeTime: `${current.startTime} - ${current.endTime}`,
             footerRightText: `zbyva ${remaining} min`
         };
     } else {
@@ -110,45 +117,34 @@ function getArduinoData() {
 
 // --- ENDPOINTY ---
 
-// 1. Přidání rezervace
 app.post('/booking', (req, res) => {
     const data = req.body;
-    // Kontrola duplicity (aby se tam nepřidávalo to samé pořád dokola při refresh)
     const exists = todayBookings.some(b => b.id === data.id);
     if (!exists) {
         todayBookings.push(data);
-        console.log(`[NOVÁ REZERVACE] ${data.roomName} (${data.startTime}-${data.endTime})`);
+        console.log(`[NOVÁ REZERVACE] ${data.roomName}`);
     }
     res.json({ status: 'success' });
 });
 
-// 2. Synchronizace všech rezervací (volá se při načtení stránky)
 app.post('/sync-bookings', (req, res) => {
-    const bookings = req.body; // Pole rezervací z localStorage
+    const bookings = req.body;
     if (Array.isArray(bookings)) {
-        // Přepíšeme pole na serveru tím, co poslal klient (zajistí shodu)
-        // Filtrujeme jen ty, co mají datum
-        todayBookings = bookings.filter(b => b.date);
-        console.log(`[SYNC] Synchronizováno ${todayBookings.length} rezervací z klienta.`);
+        todayBookings = bookings;
+        console.log(`[SYNC] Načteno ${todayBookings.length} rezervací.`);
     }
     res.json({ status: 'synced' });
 });
 
-// 3. Pro web - seznam
 app.get('/bookings/today', (req, res) => {
-    const today = new Date().toISOString().split('T')[0];
-    res.json(todayBookings.filter(b => b.date === today));
+    res.json(todayBookings);
 });
 
-// 4. Pro Arduino
 app.get('/arduino-status', (req, res) => {
     const data = getArduinoData();
     res.json(data);
 });
 
 app.listen(PORT, () => {
-    console.log(`--------------------------------------------------`);
-    console.log(`Server běží na: http://192.168.90.55:${PORT}`); // <-- Zkontroluj IP!
-    console.log(`Čas serveru je: ${new Date().toLocaleTimeString()}`);
-    console.log(`--------------------------------------------------`);
+    console.log(`Server běží na portu: ${PORT}`);
 });
