@@ -93,7 +93,7 @@ function getArduinoData() {
             mainText: "OBSAZENO",
             roomName: removeAccents(current.roomName),
             rangeTime: `${current.startTime} - ${current.endTime}`,
-            footerRightText: `zbyva ${remaining} min`
+            footerRight: `zbyva ${remaining} min`
         };
     } else {
         console.log(`   -> STAV: VOLNO`);
@@ -113,7 +113,7 @@ function getArduinoData() {
             mainText: "VOLNO",
             roomName: "Ucel schuzky",
             rangeTime: nextTimeText,
-            footerRightText: nextInfoText
+            footerRight: nextInfoText
         };
     }
 }
@@ -152,3 +152,4 @@ app.get('/arduino-status', (req, res) => {
 app.listen(PORT, () => {
     console.log(`Server běží na portu: ${PORT}`);
 });
+
