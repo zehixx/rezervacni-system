@@ -12,6 +12,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // Tady se drží data pro všechna zařízení
 let allBookings = [];
+// Proměnná pro uložení času poslední rezervace (pro anti-spam)
+let lastBookingTime = 0;
 
 function removeAccents(str) {
     return str ? str.normalize("NFD").replace(/[\u0300-\u036f]/g, "") : "";
@@ -58,26 +60,22 @@ function getArduinoData() {
     const currentMinutes = getCurrentTimeMinutes();
     const todayISO = getIsoDateCheck();
 
-    // 1. Vybereme jen dnešní schůzky a seřadíme je
     const todaysBookings = allBookings
         .filter(b => b.date === todayISO)
         .sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
 
-    // 2. Zjistíme, jestli nějaká právě běží
     const current = todaysBookings.find(booking => {
         const start = timeToMinutes(booking.startTime);
         const end = timeToMinutes(booking.endTime);
         return currentMinutes >= start && currentMinutes < end;
     });
 
-    // 3. Zjistíme, která je další (startuje později než teď)
     const next = todaysBookings.find(booking => {
         return timeToMinutes(booking.startTime) > currentMinutes;
     });
 
     const formattedTime = getFormattedTime();
     
-    // Debug log
     console.log(`[CHECK] Čas: ${formattedTime} (${currentMinutes}) | Dnes: ${todayISO} | Rezervací: ${todaysBookings.length}`);
 
     const baseResponse = {
@@ -86,7 +84,6 @@ function getArduinoData() {
     };
 
     if (current) {
-        // --- STAV: OBSAZENO ---
         const endMins = timeToMinutes(current.endTime);
         const remaining = endMins - currentMinutes;
 
@@ -99,17 +96,13 @@ function getArduinoData() {
             footerRightText: `zbyva ${remaining} min`
         };
     } else {
-        // --- STAV: VOLNO ---
         let nextInfoText = "zadna dalsi";
         let nextTimeText = "volno cely den";
 
         if (next) {
             const startMins = timeToMinutes(next.startTime);
             const diff = startMins - currentMinutes;
-            
-            // Tady byla chyba - Arduino potřebuje vědět, ZA JAK DLOUHO to začne
             nextInfoText = `dalsi za ${diff} min`; 
-            // A vpravo nahoře ukážeme, kdy začíná ta další
             nextTimeText = `dalsi v ${next.startTime}`;
         }
 
@@ -117,7 +110,7 @@ function getArduinoData() {
             ...baseResponse,
             status: "FREE",
             mainText: "VOLNO",
-            roomName: "Ucel schuzky", // Default text
+            roomName: "Ucel schuzky",
             rangeTime: nextTimeText,
             footerRightText: nextInfoText
         };
@@ -128,21 +121,73 @@ function getArduinoData() {
 
 app.post('/booking', (req, res) => {
     const data = req.body;
-    // Uložíme do společného pole na serveru
+    const now = Date.now();
+
+    // 1. OCHRANA: Rate Limiting (1 minuta mezi rezervacemi celkově)
+    if (now - lastBookingTime < 60000) {
+        const waitSec = Math.ceil((60000 - (now - lastBookingTime)) / 1000);
+        return res.status(429).json({ 
+            status: 'error', 
+            message: `Prosím počkejte ${waitSec} sekund před další rezervací.` 
+        });
+    }
+
+    // 2. OCHRANA: Validace časů
+    const newStart = timeToMinutes(data.startTime);
+    const newEnd = timeToMinutes(data.endTime);
+    
+    if (newStart >= newEnd) {
+        return res.status(400).json({ status: 'error', message: 'Čas konce musí být až po začátku.' });
+    }
+
+    // 3. OCHRANA: Detekce kolizí (překrývání termínů)
+    const conflict = allBookings.find(b => {
+        // Kontrolujeme jen stejný den
+        if (b.date !== data.date) return false;
+
+        const existingStart = timeToMinutes(b.startTime);
+        const existingEnd = timeToMinutes(b.endTime);
+
+        // Logika překryvu: (StartA < EndB) a (StartB < EndA)
+        return (newStart < existingEnd && existingStart < newEnd);
+    });
+
+    if (conflict) {
+        console.log(`[COLISION] Pokus o rezervaci ${data.startTime}-${data.endTime} koliduje s ${conflict.startTime}-${conflict.endTime}`);
+        return res.status(409).json({ 
+            status: 'error', 
+            message: `V tomto čase už je rezervace: ${conflict.roomName} (${conflict.startTime}-${conflict.endTime})` 
+        });
+    }
+
+    // Vše OK - Uložíme
     const exists = allBookings.some(b => b.id === data.id);
     if (!exists) {
         allBookings.push(data);
+        lastBookingTime = now; // Aktualizujeme čas poslední rezervace
         console.log(`[REQ] Uloženo: ${data.roomName} (${data.date} ${data.startTime})`);
     }
+    
     res.json({ status: 'success' });
 });
 
-// Tento endpoint slouží pro web - vrátí mu aktuální data ze serveru
 app.get('/bookings/all', (req, res) => {
     res.json(allBookings);
 });
 
-// Pro Arduino
+app.post('/sync-bookings', (req, res) => {
+    const bookings = req.body;
+    if (Array.isArray(bookings)) {
+        // Při syncu ze strany klienta neřešíme kolize tak přísně, 
+        // ale pro jistotu aktualizujeme seznam, pokud je server prázdný (po restartu)
+        if (allBookings.length === 0) {
+             allBookings = bookings;
+             console.log(`[SYNC] Načteno ${allBookings.length} rezervací.`);
+        }
+    }
+    res.json({ status: 'synced' });
+});
+
 app.get('/arduino-status', (req, res) => {
     res.json(getArduinoData());
 });
