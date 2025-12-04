@@ -4,7 +4,6 @@ const cors = require('cors');
 const path = require('path');
 
 const app = express();
-// DŮLEŽITÉ: Render přiděluje port dynamicky, musíme použít process.env.PORT
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
@@ -22,28 +21,38 @@ function timeToMinutes(timeStr) {
     return hours * 60 + minutes;
 }
 
-// --- FIX ČASOVÉHO PÁSMA (CZECH TIME) ---
-function getCzechDate() {
+// === FIX ČASU: Použijeme systémový čas pro Europe/Prague ===
+function getCzechNow() {
+    // Vytvoříme datum a převedeme ho na string v české zóně, pak zpět na objekt
     const now = new Date();
-    // Získáme UTC čas v milisekundách
-    const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
-    // Přičteme 1 hodinu pro zimní čas (CET). V létě by to bylo +2.
-    const czechTime = new Date(utc + (3600000 * 1)); 
-    return czechTime;
+    const czString = now.toLocaleString("en-US", {timeZone: "Europe/Prague"});
+    return new Date(czString);
 }
 
+// Vrátí aktuální minuty od půlnoci v ČR
 function getCurrentTimeMinutes() {
-    const now = getCzechDate(); 
-    return now.getHours() * 60 + now.getMinutes();
+    const czNow = getCzechNow();
+    return czNow.getHours() * 60 + czNow.getMinutes();
 }
 
+// Vrátí datum ve formátu YYYY-MM-DD podle ČR (pro porovnání s rezervací)
+function getCzechDateISO() {
+    const czNow = getCzechNow();
+    const year = czNow.getFullYear();
+    const month = String(czNow.getMonth() + 1).padStart(2, '0');
+    const day = String(czNow.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+// Vrátí formátované datum pro displej (D.M.YYYY)
 function getFormattedDate() {
-    const d = getCzechDate();
+    const d = getCzechNow();
     return `${d.getDate()}.${d.getMonth() + 1}.${d.getFullYear()}`;
 }
 
+// Vrátí formátovaný čas pro displej (HH:MM)
 function getFormattedTime() {
-    const d = getCzechDate();
+    const d = getCzechNow();
     const h = d.getHours().toString().padStart(2, '0');
     const m = d.getMinutes().toString().padStart(2, '0');
     return `${h}:${m}`;
@@ -51,14 +60,12 @@ function getFormattedTime() {
 
 // --- LOGIKA PRO ARDUINO ---
 function getArduinoData() {
-    const now = getCzechDate(); // Používáme fixnutý český čas
     const currentMinutes = getCurrentTimeMinutes();
-    
-    // Pro jednoduchost porovnáváme jen čas, datum bereme z rezervací, které nám poslal web
-    // (Předpokládáme, že web posílá jen dnešní rezervace nebo je filtrujeme)
-    const todayDateISO = now.toISOString().split('T')[0]; // Toto je sice UTC datum, ale pro ID to stačí
+    const todayISO = getCzechDateISO(); 
 
+    // Vyfiltrujeme jen rezervace pro DNEŠNÍ ČESKÝ DEN
     const sortedBookings = todayBookings
+        .filter(b => b.date === todayISO)
         .sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
 
     // Hledáme aktuální schůzku
@@ -68,6 +75,7 @@ function getArduinoData() {
         return currentMinutes >= start && currentMinutes < end;
     });
 
+    // Hledáme následující schůzku
     const next = sortedBookings.find(booking => {
         return timeToMinutes(booking.startTime) > currentMinutes;
     });
@@ -77,7 +85,7 @@ function getArduinoData() {
         currentTime: getFormattedTime()
     };
 
-    console.log(`[CHECK] CZ Čas: ${baseResponse.currentTime} (${currentMinutes} min) | Rezervací: ${sortedBookings.length}`);
+    console.log(`[CHECK] CZ Čas: ${baseResponse.currentTime} | Dnes je: ${todayISO} | Rezervací: ${sortedBookings.length}`);
     
     if (current) {
         console.log(`   -> STAV: OBSAZENO (${current.roomName})`);
@@ -119,10 +127,11 @@ function getArduinoData() {
 
 app.post('/booking', (req, res) => {
     const data = req.body;
+    console.log("Přijat požadavek na rezervaci:", data);
     const exists = todayBookings.some(b => b.id === data.id);
     if (!exists) {
         todayBookings.push(data);
-        console.log(`[NOVÁ REZERVACE] ${data.roomName}`);
+        console.log(`[NOVÁ REZERVACE] ${data.roomName} (${data.date} ${data.startTime})`);
     }
     res.json({ status: 'success' });
 });
@@ -137,7 +146,8 @@ app.post('/sync-bookings', (req, res) => {
 });
 
 app.get('/bookings/today', (req, res) => {
-    res.json(todayBookings);
+    const today = getCzechDateISO();
+    res.json(todayBookings.filter(b => b.date === today));
 });
 
 app.get('/arduino-status', (req, res) => {
