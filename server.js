@@ -21,49 +21,45 @@ function timeToMinutes(timeStr) {
     return hours * 60 + minutes;
 }
 
-// === FIX ČASU: Použijeme systémový čas pro Europe/Prague ===
-function getCzechNow() {
-    // Vytvoříme datum a převedeme ho na string v české zóně, pak zpět na objekt
+// === FIX 1: Robustní získání českého času ===
+function getCzechDateObj() {
     const now = new Date();
+    // Převedeme na string v české zóně a pak zpět na objekt
     const czString = now.toLocaleString("en-US", {timeZone: "Europe/Prague"});
     return new Date(czString);
 }
 
-// Vrátí aktuální minuty od půlnoci v ČR
-function getCurrentTimeMinutes() {
-    const czNow = getCzechNow();
-    return czNow.getHours() * 60 + czNow.getMinutes();
-}
-
-// Vrátí datum ve formátu YYYY-MM-DD podle ČR (pro porovnání s rezervací)
+// === FIX 2: Ruční formátování data (toISOString vrací UTC, to nechceme) ===
 function getCzechDateISO() {
-    const czNow = getCzechNow();
-    const year = czNow.getFullYear();
-    const month = String(czNow.getMonth() + 1).padStart(2, '0');
-    const day = String(czNow.getDate()).padStart(2, '0');
+    const d = getCzechDateObj();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
 }
 
-// Vrátí formátované datum pro displej (D.M.YYYY)
+function getCurrentTimeMinutes() {
+    const now = getCzechDateObj();
+    return now.getHours() * 60 + now.getMinutes();
+}
+
 function getFormattedDate() {
-    const d = getCzechNow();
+    const d = getCzechDateObj();
     return `${d.getDate()}.${d.getMonth() + 1}.${d.getFullYear()}`;
 }
 
-// Vrátí formátovaný čas pro displej (HH:MM)
 function getFormattedTime() {
-    const d = getCzechNow();
+    const d = getCzechDateObj();
     const h = d.getHours().toString().padStart(2, '0');
     const m = d.getMinutes().toString().padStart(2, '0');
     return `${h}:${m}`;
 }
 
-// --- LOGIKA PRO ARDUINO ---
 function getArduinoData() {
     const currentMinutes = getCurrentTimeMinutes();
-    const todayISO = getCzechDateISO(); 
+    const todayISO = getCzechDateISO(); // Používáme opravené datum
 
-    // Vyfiltrujeme jen rezervace pro DNEŠNÍ ČESKÝ DEN
+    // Filtrujeme rezervace jen pro DNEŠNÍ ČESKÝ DEN
     const sortedBookings = todayBookings
         .filter(b => b.date === todayISO)
         .sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
@@ -75,7 +71,6 @@ function getArduinoData() {
         return currentMinutes >= start && currentMinutes < end;
     });
 
-    // Hledáme následující schůzku
     const next = sortedBookings.find(booking => {
         return timeToMinutes(booking.startTime) > currentMinutes;
     });
@@ -127,11 +122,10 @@ function getArduinoData() {
 
 app.post('/booking', (req, res) => {
     const data = req.body;
-    console.log("Přijat požadavek na rezervaci:", data);
     const exists = todayBookings.some(b => b.id === data.id);
     if (!exists) {
         todayBookings.push(data);
-        console.log(`[NOVÁ REZERVACE] ${data.roomName} (${data.date} ${data.startTime})`);
+        console.log(`[NOVÁ REZERVACE] ${data.roomName} (${data.date})`);
     }
     res.json({ status: 'success' });
 });
