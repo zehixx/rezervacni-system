@@ -21,26 +21,17 @@ function timeToMinutes(timeStr) {
     return hours * 60 + minutes;
 }
 
-// === FIX: Robustní získání českého času ===
+// === FIX ČASU: HARD MATH (UTC+1) ===
+// Server na Renderu je v UTC. Pro ČR (zima) přičteme 1 hodinu.
 function getCzechDateObj() {
-    const now = new Date();
-    // Převedeme na string v české zóně a pak zpět na objekt
-    const czString = now.toLocaleString("en-US", {timeZone: "Europe/Prague"});
-    return new Date(czString);
-}
-
-// === FIX: Ruční formátování data pro porovnání ===
-function getCzechDateISO() {
-    const d = getCzechDateObj();
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
+    const serverNow = new Date();
+    // Přičteme 1 hodinu (60 min * 60 sec * 1000 ms)
+    return new Date(serverNow.getTime() + (3600000)); 
 }
 
 function getCurrentTimeMinutes() {
-    const now = getCzechDateObj();
-    return now.getHours() * 60 + now.getMinutes();
+    const d = getCzechDateObj();
+    return d.getHours() * 60 + d.getMinutes();
 }
 
 function getFormattedDate() {
@@ -55,13 +46,23 @@ function getFormattedTime() {
     return `${h}:${m}`;
 }
 
-function getArduinoData() {
-    const currentMinutes = getCurrentTimeMinutes();
-    const todayISO = getCzechDateISO(); 
+// Funkce pro formát data YYYY-MM-DD (pro porovnání s rezervací)
+function getIsoDateCheck() {
+    const d = getCzechDateObj();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
 
-    // Filtrujeme rezervace jen pro DNEŠNÍ ČESKÝ DEN
+function getArduinoData() {
+    const now = getCzechDateObj();
+    const currentMinutes = getCurrentTimeMinutes();
+    const todayCheck = getIsoDateCheck();
+
+    // Filtrujeme rezervace: Musí se shodovat datum podle českého času
     const sortedBookings = todayBookings
-        .filter(b => b.date === todayISO)
+        .filter(b => b.date === todayCheck)
         .sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
 
     // Hledáme aktuální schůzku
@@ -80,7 +81,7 @@ function getArduinoData() {
         currentTime: getFormattedTime()
     };
 
-    console.log(`[CHECK] CZ Čas: ${baseResponse.currentTime} | Dnes je: ${todayISO} | Rezervací: ${sortedBookings.length}`);
+    console.log(`[CHECK] ServerČas: ${baseResponse.currentTime} | DatumCheck: ${todayCheck} | Nalezeno rezervací: ${sortedBookings.length}`);
     
     if (current) {
         console.log(`   -> STAV: OBSAZENO (${current.roomName})`);
@@ -93,7 +94,7 @@ function getArduinoData() {
             mainText: "OBSAZENO",
             roomName: removeAccents(current.roomName),
             rangeTime: `${current.startTime} - ${current.endTime}`,
-            footerRight: `zbyva ${remaining} min`
+            footerRightText: `zbyva ${remaining} min`
         };
     } else {
         console.log(`   -> STAV: VOLNO`);
@@ -113,7 +114,7 @@ function getArduinoData() {
             mainText: "VOLNO",
             roomName: "Ucel schuzky",
             rangeTime: nextTimeText,
-            footerRight: nextInfoText
+            footerRightText: nextInfoText
         };
     }
 }
@@ -122,10 +123,11 @@ function getArduinoData() {
 
 app.post('/booking', (req, res) => {
     const data = req.body;
+    // Jednoduchá ochrana proti duplicitám
     const exists = todayBookings.some(b => b.id === data.id);
     if (!exists) {
         todayBookings.push(data);
-        console.log(`[NOVÁ REZERVACE] ${data.roomName} (${data.date})`);
+        console.log(`[NOVÁ REZERVACE] ${data.roomName} (${data.startTime})`);
     }
     res.json({ status: 'success' });
 });
@@ -134,13 +136,13 @@ app.post('/sync-bookings', (req, res) => {
     const bookings = req.body;
     if (Array.isArray(bookings)) {
         todayBookings = bookings;
-        console.log(`[SYNC] Načteno ${todayBookings.length} rezervací.`);
+        console.log(`[SYNC] Klient poslal ${todayBookings.length} rezervací.`);
     }
     res.json({ status: 'synced' });
 });
 
 app.get('/bookings/today', (req, res) => {
-    const today = getCzechDateISO();
+    const today = getIsoDateCheck();
     res.json(todayBookings.filter(b => b.date === today));
 });
 
@@ -152,4 +154,3 @@ app.get('/arduino-status', (req, res) => {
 app.listen(PORT, () => {
     console.log(`Server běží na portu: ${PORT}`);
 });
-
