@@ -21,7 +21,7 @@ function timeToMinutes(timeStr) {
     return hours * 60 + minutes;
 }
 
-// === FIX 1: Robustní získání českého času ===
+// === FIX: Robustní získání českého času ===
 function getCzechDateObj() {
     const now = new Date();
     // Převedeme na string v české zóně a pak zpět na objekt
@@ -29,7 +29,7 @@ function getCzechDateObj() {
     return new Date(czString);
 }
 
-// === FIX 2: Ruční formátování data (toISOString vrací UTC, to nechceme) ===
+// === FIX: Ruční formátování data pro porovnání ===
 function getCzechDateISO() {
     const d = getCzechDateObj();
     const year = d.getFullYear();
@@ -57,7 +57,7 @@ function getFormattedTime() {
 
 function getArduinoData() {
     const currentMinutes = getCurrentTimeMinutes();
-    const todayISO = getCzechDateISO(); // Používáme opravené datum
+    const todayISO = getCzechDateISO(); 
 
     // Filtrujeme rezervace jen pro DNEŠNÍ ČESKÝ DEN
     const sortedBookings = todayBookings
