@@ -21,54 +21,54 @@ function timeToMinutes(timeStr) {
     return hours * 60 + minutes;
 }
 
-// === FIX ČASU: HARD MATH (UTC+1) ===
-// Server na Renderu je v UTC. Pro ČR (zima) přičteme 1 hodinu.
+// === ABSOLUTNÍ FIX ČASU (UTC+1 natvrdo) ===
 function getCzechDateObj() {
-    const serverNow = new Date();
-    // Přičteme 1 hodinu (60 min * 60 sec * 1000 ms)
-    return new Date(serverNow.getTime() + (3600000)); 
+    const now = new Date();
+    // Render běží v UTC. Přičteme 1 hodinu (60 * 60 * 1000 ms) pro CET (zima)
+    // Pokud je léto, změňte 1 na 2.
+    return new Date(now.getTime() + (1 * 60 * 60 * 1000)); 
 }
 
 function getCurrentTimeMinutes() {
     const d = getCzechDateObj();
-    return d.getHours() * 60 + d.getMinutes();
+    return d.getUTCHours() * 60 + d.getUTCMinutes();
+}
+
+function getIsoDateCheck() {
+    const d = getCzechDateObj();
+    // Pozor: getMonth() vrací 0-11
+    const year = d.getUTCFullYear();
+    const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(d.getUTCDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
 }
 
 function getFormattedDate() {
     const d = getCzechDateObj();
-    return `${d.getDate()}.${d.getMonth() + 1}.${d.getFullYear()}`;
+    return `${d.getUTCDate()}.${d.getUTCMonth() + 1}.${d.getUTCFullYear()}`;
 }
 
 function getFormattedTime() {
     const d = getCzechDateObj();
-    const h = d.getHours().toString().padStart(2, '0');
-    const m = d.getMinutes().toString().padStart(2, '0');
+    const h = String(d.getUTCHours()).padStart(2, '0');
+    const m = String(d.getUTCMinutes()).padStart(2, '0');
     return `${h}:${m}`;
 }
 
-// Funkce pro formát data YYYY-MM-DD (pro porovnání s rezervací)
-function getIsoDateCheck() {
-    const d = getCzechDateObj();
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-}
-
 function getArduinoData() {
-    const now = getCzechDateObj();
     const currentMinutes = getCurrentTimeMinutes();
-    const todayCheck = getIsoDateCheck();
+    const todayISO = getIsoDateCheck();
 
-    // Filtrujeme rezervace: Musí se shodovat datum podle českého času
+    // Filtrujeme rezervace jen pro DNEŠNÍ DEN (podle českého času)
     const sortedBookings = todayBookings
-        .filter(b => b.date === todayCheck)
+        .filter(b => b.date === todayISO)
         .sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
 
     // Hledáme aktuální schůzku
     const current = sortedBookings.find(booking => {
         const start = timeToMinutes(booking.startTime);
         const end = timeToMinutes(booking.endTime);
+        // Je aktuální čas uvnitř intervalu?
         return currentMinutes >= start && currentMinutes < end;
     });
 
@@ -76,13 +76,15 @@ function getArduinoData() {
         return timeToMinutes(booking.startTime) > currentMinutes;
     });
 
+    const formattedTime = getFormattedTime();
+    console.log(`[DEBUG] ServerTime: ${formattedTime} (${currentMinutes}m) | Dnes: ${todayISO} | Rezervací: ${sortedBookings.length}`);
+    
+    // Odpověď pro Arduino
     const baseResponse = {
         currentDate: getFormattedDate(),
-        currentTime: getFormattedTime()
+        currentTime: formattedTime
     };
 
-    console.log(`[CHECK] ServerČas: ${baseResponse.currentTime} | DatumCheck: ${todayCheck} | Nalezeno rezervací: ${sortedBookings.length}`);
-    
     if (current) {
         console.log(`   -> STAV: OBSAZENO (${current.roomName})`);
         const endMins = timeToMinutes(current.endTime);
@@ -123,11 +125,10 @@ function getArduinoData() {
 
 app.post('/booking', (req, res) => {
     const data = req.body;
-    // Jednoduchá ochrana proti duplicitám
     const exists = todayBookings.some(b => b.id === data.id);
     if (!exists) {
         todayBookings.push(data);
-        console.log(`[NOVÁ REZERVACE] ${data.roomName} (${data.startTime})`);
+        console.log(`[NOVÁ REZERVACE] ${data.roomName} (${data.date} ${data.startTime})`);
     }
     res.json({ status: 'success' });
 });
@@ -136,7 +137,7 @@ app.post('/sync-bookings', (req, res) => {
     const bookings = req.body;
     if (Array.isArray(bookings)) {
         todayBookings = bookings;
-        console.log(`[SYNC] Klient poslal ${todayBookings.length} rezervací.`);
+        console.log(`[SYNC] Načteno ${todayBookings.length} rezervací.`);
     }
     res.json({ status: 'synced' });
 });
