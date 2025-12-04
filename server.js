@@ -10,7 +10,8 @@ app.use(cors());
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-let todayBookings = [];
+// Tady se drží data pro všechna zařízení
+let allBookings = [];
 
 function removeAccents(str) {
     return str ? str.normalize("NFD").replace(/[\u0300-\u036f]/g, "") : "";
@@ -21,17 +22,15 @@ function timeToMinutes(timeStr) {
     return hours * 60 + minutes;
 }
 
-// === FIX: Správný výpočet času (Render je UTC) ===
+// === ROBUSTNÍ ČASOVÁ ZÓNA (Europe/Prague) ===
 function getCzechDateObj() {
     const now = new Date();
-    // Render běží v UTC. Přičteme 1 hodinu (3600000 ms) pro CET
-    // Pokud by byl letní čas, bylo by to +2 hodiny.
-    return new Date(now.getTime() + 3600000); 
+    const czString = now.toLocaleString("en-US", {timeZone: "Europe/Prague"});
+    return new Date(czString);
 }
 
 function getCurrentTimeMinutes() {
     const d = getCzechDateObj();
-    // Používáme getHours (lokální pro ten posunutý objekt), ne getUTC
     return d.getHours() * 60 + d.getMinutes();
 }
 
@@ -59,28 +58,27 @@ function getArduinoData() {
     const currentMinutes = getCurrentTimeMinutes();
     const todayISO = getIsoDateCheck();
 
-    // Filtrujeme rezervace pro dnešek
-    const sortedBookings = todayBookings
+    // 1. Vybereme jen dnešní schůzky a seřadíme je
+    const todaysBookings = allBookings
         .filter(b => b.date === todayISO)
         .sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
 
-    // Hledáme aktuální schůzku
-    const current = sortedBookings.find(booking => {
+    // 2. Zjistíme, jestli nějaká právě běží
+    const current = todaysBookings.find(booking => {
         const start = timeToMinutes(booking.startTime);
         const end = timeToMinutes(booking.endTime);
-        // Podmínka: Aktuální minuta je uvnitř intervalu
         return currentMinutes >= start && currentMinutes < end;
     });
 
-    const next = sortedBookings.find(booking => {
+    // 3. Zjistíme, která je další (startuje později než teď)
+    const next = todaysBookings.find(booking => {
         return timeToMinutes(booking.startTime) > currentMinutes;
     });
 
     const formattedTime = getFormattedTime();
     
-    // Debug log pro kontrolu
-    console.log(`[DEBUG] ServerTime: ${formattedTime} (${currentMinutes}m) | Rezervace dnes: ${sortedBookings.length}`);
-    if (current) console.log(`[DEBUG] Nalezena probíhající schůzka: ${current.roomName}`);
+    // Debug log
+    console.log(`[CHECK] Čas: ${formattedTime} (${currentMinutes}) | Dnes: ${todayISO} | Rezervací: ${todaysBookings.length}`);
 
     const baseResponse = {
         currentDate: getFormattedDate(),
@@ -88,6 +86,7 @@ function getArduinoData() {
     };
 
     if (current) {
+        // --- STAV: OBSAZENO ---
         const endMins = timeToMinutes(current.endTime);
         const remaining = endMins - currentMinutes;
 
@@ -100,13 +99,17 @@ function getArduinoData() {
             footerRightText: `zbyva ${remaining} min`
         };
     } else {
+        // --- STAV: VOLNO ---
         let nextInfoText = "zadna dalsi";
         let nextTimeText = "volno cely den";
 
         if (next) {
             const startMins = timeToMinutes(next.startTime);
             const diff = startMins - currentMinutes;
-            nextInfoText = `dalsi za ${diff} min`;
+            
+            // Tady byla chyba - Arduino potřebuje vědět, ZA JAK DLOUHO to začne
+            nextInfoText = `dalsi za ${diff} min`; 
+            // A vpravo nahoře ukážeme, kdy začíná ta další
             nextTimeText = `dalsi v ${next.startTime}`;
         }
 
@@ -114,7 +117,7 @@ function getArduinoData() {
             ...baseResponse,
             status: "FREE",
             mainText: "VOLNO",
-            roomName: "Ucel schuzky",
+            roomName: "Ucel schuzky", // Default text
             rangeTime: nextTimeText,
             footerRightText: nextInfoText
         };
@@ -122,29 +125,24 @@ function getArduinoData() {
 }
 
 // --- ENDPOINTY ---
+
 app.post('/booking', (req, res) => {
     const data = req.body;
-    const exists = todayBookings.some(b => b.id === data.id);
+    // Uložíme do společného pole na serveru
+    const exists = allBookings.some(b => b.id === data.id);
     if (!exists) {
-        todayBookings.push(data);
-        console.log(`[REQ] Nová: ${data.roomName} (${data.startTime})`);
+        allBookings.push(data);
+        console.log(`[REQ] Uloženo: ${data.roomName} (${data.date} ${data.startTime})`);
     }
     res.json({ status: 'success' });
 });
 
-app.post('/sync-bookings', (req, res) => {
-    const bookings = req.body;
-    if (Array.isArray(bookings)) {
-        todayBookings = bookings;
-        console.log(`[SYNC] Načteno ${bookings.length} rezervací.`);
-    }
-    res.json({ status: 'synced' });
+// Tento endpoint slouží pro web - vrátí mu aktuální data ze serveru
+app.get('/bookings/all', (req, res) => {
+    res.json(allBookings);
 });
 
-app.get('/bookings/today', (req, res) => {
-    res.json(todayBookings.filter(b => b.date === getIsoDateCheck()));
-});
-
+// Pro Arduino
 app.get('/arduino-status', (req, res) => {
     res.json(getArduinoData());
 });
