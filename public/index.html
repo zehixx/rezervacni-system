@@ -68,6 +68,7 @@
         .info-description { color:#d1d5db; font-size:0.875rem; margin-bottom:0.5rem; }
         .code-block { background: rgba(15,23,42,0.5); padding:1rem; border-radius:0.5rem; font-size:0.75rem; color:#34d399; overflow-x:auto; margin:0.5rem 0; }
         .info-hint { color:#9ca3af; font-size:0.75rem; margin-top:0.5rem; }
+        @media(max-width:640px){ .main-title { font-size:2rem; } .card { padding:1.5rem; } .form-row { grid-template-columns:1fr; } }
     </style>
 </head>
 <body>
@@ -112,7 +113,6 @@
             </div>
         </div>
     </div>
-
     <script>
         let bookings = [];
         let currentStatus = null;
@@ -126,38 +126,21 @@
         const todayBookingsContainer = document.getElementById('todayBookings');
         const currentStatusContainer = document.getElementById('currentStatus');
         const statusIndicator = document.getElementById('statusIndicator');
+        
+        // URL serveru (BEZ LOMÍTKA NA KONCI)
         const SERVER_URL = 'https://rezervacni-system-tuas.onrender.com'; 
 
         bookButton.addEventListener('click', handleBooking);
         
-        window.addEventListener('load', () => { init(); });
+        window.addEventListener('load', () => {
+            init();
+        });
 
         function init() {
             const today = new Date().toISOString().split('T')[0];
             if(!selectedDateInput.value) selectedDateInput.value = today;
-            
-            // Načtení dat z localStorage (záloha)
-            const saved = localStorage.getItem('meetingBookings');
-            if(saved) {
-                try {
-                   const localBookings = JSON.parse(saved);
-                   // Pokud je server prázdný, zkusíme ho obnovit (sync)
-                   syncWithServer(localBookings);
-                } catch(e) {}
-            }
-
             fetchDataFromServer();
             setInterval(() => { fetchDataFromServer(); }, 10000);
-        }
-
-        async function syncWithServer(localData) {
-            try {
-                await fetch(`${SERVER_URL}/sync-bookings`, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify(localData)
-                });
-            } catch(e) {}
         }
 
         async function fetchDataFromServer() {
@@ -166,8 +149,6 @@
                 if (response.ok) {
                     const serverBookings = await response.json();
                     bookings = serverBookings;
-                    // Záloha do local storage
-                    localStorage.setItem('meetingBookings', JSON.stringify(bookings));
                     updateDisplay();
                     checkCurrentStatus();
                 }
@@ -183,7 +164,14 @@
             if (!roomName || !selectedDate || !startTime || !endTime) { alert('Vyplňte prosím všechna pole'); return; }
             if (startTime >= endTime) { alert('Čas konce musí být po času začátku'); return; }
 
-            const newBooking = { id: Date.now(), date: selectedDate, startTime, endTime, roomName, timestamp: new Date().toISOString() };
+            const newBooking = { 
+                id: Date.now(), 
+                date: selectedDate, 
+                startTime, 
+                endTime, 
+                roomName, 
+                timestamp: new Date().toISOString() 
+            };
 
             try {
                 const req = await fetch(`${SERVER_URL}/booking`, {
@@ -197,7 +185,7 @@
                 if(req.ok && resData.status === 'success') {
                     showSuccessMessage();
                     roomNameInput.value=''; startTimeInput.value=''; endTimeInput.value='';
-                    fetchDataFromServer(); // Okamžitá aktualizace
+                    fetchDataFromServer(); 
                 } else {
                     // Zobrazení chyby ze serveru (spam nebo kolize)
                     alert(resData.message || "Chyba při rezervaci.");
