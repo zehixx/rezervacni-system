@@ -1,20 +1,40 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
+const mongoose = require('mongoose'); 
 const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const MONGO_URI = process.env.MONGO_URI; 
 
 app.use(cors());
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Data (v paměti)
-let allBookings = [];
-// Čas poslední rezervace (pro anti-spam)
+// --- 1. PŘIPOJENÍ K DATABÁZI ---
+if (!MONGO_URI) {
+    console.error("CHYBA: Chybí MONGO_URI v nastavení Renderu!");
+} else {
+    mongoose.connect(MONGO_URI)
+        .then(() => console.log('✅ MongoDB připojeno. Data jsou v bezpečí.'))
+        .catch(err => console.error('❌ MongoDB chyba:', err));
+}
+
+// --- 2. SCHÉMA DATABÁZE ---
+const meetingSchema = new mongoose.Schema({
+    roomName: String,
+    date: String,
+    startTime: String,
+    endTime: String,
+    createdAt: { type: Date, default: Date.now }
+});
+const Meeting = mongoose.model('Meeting', meetingSchema);
+
+// Proměnná pro anti-spam (drží se v paměti běžícího serveru)
 let lastBookingTime = 0;
 
+// --- POMOCNÉ FUNKCE ---
 function removeAccents(str) {
     return str ? str.normalize("NFD").replace(/[\u0300-\u036f]/g, "") : "";
 }
@@ -24,11 +44,10 @@ function timeToMinutes(timeStr) {
     return hours * 60 + minutes;
 }
 
-// === ROBUSTNÍ ČASOVÁ ZÓNA (Europe/Prague) ===
+// === ČASOVÁ ZÓNA (Hard Fix UTC+1 pro ČR) ===
 function getCzechDateObj() {
     const now = new Date();
-    // Render je v UTC. Přičteme 1 hodinu (3600000ms) pro CET (zima)
-    // Pokud bude letní čas, bude třeba +2h.
+    // Render je v UTC. Přičteme 1 hodinu (3600000 ms).
     return new Date(now.getTime() + 3600000); 
 }
 
@@ -57,31 +76,29 @@ function getFormattedTime() {
     return `${h}:${m}`;
 }
 
-function getArduinoData() {
+// --- LOGIKA PRO ARDUINO ---
+async function getArduinoData() {
     const currentMinutes = getCurrentTimeMinutes();
     const todayISO = getIsoDateCheck();
 
-    // 1. Filtrujeme rezervace pro dnešek
-    const sortedBookings = allBookings
-        .filter(b => b.date === todayISO)
-        .sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
+    // Načteme dnešní rezervace z DB
+    const todaysBookings = await Meeting.find({ date: todayISO }).lean();
+    
+    // Seřadíme
+    todaysBookings.sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
 
-    // 2. Hledáme aktuální schůzku
-    const current = sortedBookings.find(booking => {
+    const current = todaysBookings.find(booking => {
         const start = timeToMinutes(booking.startTime);
         const end = timeToMinutes(booking.endTime);
         return currentMinutes >= start && currentMinutes < end;
     });
 
-    // 3. Hledáme následující
-    const next = sortedBookings.find(booking => {
+    const next = todaysBookings.find(booking => {
         return timeToMinutes(booking.startTime) > currentMinutes;
     });
 
     const formattedTime = getFormattedTime();
-    
-    // Debug log
-    console.log(`[CHECK] Čas: ${formattedTime} (${currentMinutes}) | Dnes: ${todayISO} | Rezervací: ${sortedBookings.length}`);
+    console.log(`[CHECK] Čas: ${formattedTime} | Rezervací: ${todaysBookings.length}`);
 
     const baseResponse = {
         currentDate: getFormattedDate(),
@@ -105,14 +122,14 @@ function getArduinoData() {
         if (next) {
             const startMins = timeToMinutes(next.startTime);
             const diff = startMins - currentMinutes;
-            nextInfoText = `dalsi za ${diff} min`; 
+            nextInfoText = `dalsi za ${diff} min`;
             nextTimeText = `dalsi v ${next.startTime}`;
         }
         return {
             ...baseResponse,
             status: "FREE",
             mainText: "VOLNO",
-            roomName: "Ucel schuzky", 
+            roomName: "Ucel schuzky",
             rangeTime: nextTimeText,
             footerRightText: nextInfoText
         };
@@ -121,79 +138,78 @@ function getArduinoData() {
 
 // --- ENDPOINTY ---
 
-app.post('/booking', (req, res) => {
+app.post('/booking', async (req, res) => {
     const data = req.body;
     const now = Date.now();
 
-    // 1. OCHRANA: Anti-spam (1 minuta pauza mezi jakýmikoliv rezervacemi)
+    // 1. OCHRANA: Anti-spam (1 minuta pauza)
     if (now - lastBookingTime < 60000) {
-        const waitSec = Math.ceil((60000 - (now - lastBookingTime)) / 1000);
+        const wait = Math.ceil((60000 - (now - lastBookingTime)) / 1000);
         return res.status(429).json({ 
             status: 'error', 
-            message: `Prosím počkejte ${waitSec} sekund před další rezervací.` 
+            message: `Moc rychle! Počkejte ${wait}s před další rezervací.` 
         });
     }
 
-    // 2. OCHRANA: Validace časů
+    // 2. OCHRANA: Čas
     const newStart = timeToMinutes(data.startTime);
     const newEnd = timeToMinutes(data.endTime);
-    
     if (newStart >= newEnd) {
         return res.status(400).json({ status: 'error', message: 'Čas konce musí být až po začátku.' });
     }
 
-    // 3. OCHRANA: Detekce kolizí (překrývání termínů)
-    const conflict = allBookings.find(b => {
-        // Kontrolujeme jen stejný den
-        if (b.date !== data.date) return false;
-
-        const existingStart = timeToMinutes(b.startTime);
-        const existingEnd = timeToMinutes(b.endTime);
-
-        // Matematika překryvu: (StartA < EndB) a (StartB < EndA)
-        return (newStart < existingEnd && existingStart < newEnd);
-    });
-
-    if (conflict) {
-        console.log(`[COLISION] Pokus o ${data.startTime}-${data.endTime} koliduje s ${conflict.startTime}-${conflict.endTime}`);
-        return res.status(409).json({ 
-            status: 'error', 
-            message: `V tomto čase už je rezervace: ${conflict.roomName} (${conflict.startTime}-${conflict.endTime})` 
+    // 3. OCHRANA: Kolize v DB
+    // Hledáme v DB jakýkoliv záznam ve stejný den, který se překrývá
+    try {
+        const conflict = await Meeting.findOne({
+            date: data.date,
+            $or: [
+                // (StartA < EndB) a (EndA > StartB) = překrytí
+                { startTime: { $lt: data.endTime }, endTime: { $gt: data.startTime } },
+                { startTime: data.startTime }
+            ]
         });
-    }
 
-    // Vše OK - Uložíme
-    const exists = allBookings.some(b => b.id === data.id);
-    if (!exists) {
-        allBookings.push(data);
-        lastBookingTime = now; // Aktualizujeme čas poslední rezervace
-        console.log(`[REQ] Uloženo: ${data.roomName} (${data.date} ${data.startTime})`);
-    }
-    
-    res.json({ status: 'success' });
-});
-
-// Endpoint pro web - vrátí všechna data
-app.get('/bookings/all', (req, res) => {
-    res.json(allBookings);
-});
-
-// Synchronizace z klienta (pro obnovu po restartu serveru, pokud klient má data)
-app.post('/sync-bookings', (req, res) => {
-    const bookings = req.body;
-    if (Array.isArray(bookings)) {
-        // Pokud je server prázdný (po restartu), načteme data
-        if (allBookings.length === 0) {
-             allBookings = bookings;
-             console.log(`[SYNC] Načteno ${allBookings.length} rezervací.`);
+        if (conflict) {
+            return res.status(409).json({ 
+                status: 'error', 
+                message: `KOLIZE: V tomto čase už je: ${conflict.roomName} (${conflict.startTime}-${conflict.endTime})` 
+            });
         }
+
+        // 4. Uložení do MongoDB
+        await Meeting.create({
+            roomName: data.roomName,
+            date: data.date,
+            startTime: data.startTime,
+            endTime: data.endTime
+        });
+
+        lastBookingTime = now; // Reset časovače
+        console.log(`[DB] Uloženo: ${data.roomName}`);
+        res.json({ status: 'success' });
+
+    } catch (e) {
+        console.error(e);
+        res.status(500).json({ status: 'error', message: 'Chyba databáze.' });
     }
+});
+
+// Získání všech rezervací z DB (pro Web)
+app.get('/bookings/all', async (req, res) => {
+    const bookings = await Meeting.find({}).lean();
+    res.json(bookings);
+});
+
+// Synchronizace z klienta (Už není potřeba, protože máme DB, ale endpoint necháme, aby web nepadal)
+app.post('/sync-bookings', (req, res) => {
     res.json({ status: 'synced' });
 });
 
-// Endpoint pro Arduino
-app.get('/arduino-status', (req, res) => {
-    res.json(getArduinoData());
+// Data pro Arduino
+app.get('/arduino-status', async (req, res) => {
+    const data = await getArduinoData();
+    res.json(data);
 });
 
 app.listen(PORT, () => {
